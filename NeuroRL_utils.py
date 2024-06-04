@@ -1,6 +1,7 @@
 """Utils (mostly plotting) for NeuroRL tutorial"""
 
 import numpy as np
+import xarray as xr 
 import matplotlib.pyplot as plt
 import ratinabox
 ratinabox.stylize_plots() # sets some RC params to make plots look better
@@ -208,3 +209,257 @@ class BaseTDLearner:
         plt.close()
         return anim
         
+
+
+
+
+class MiniGrid():
+    def __init__(
+        self,
+        grid : np.ndarray,
+        reward_locations : list = [(5,5)],
+        init_agent_pos : tuple = (10,10),
+        max_steps = 100,
+    ):
+        self.grid = grid
+        self.reward_locations = reward_locations
+        self.width = grid.shape[1]
+        self.height = grid.shape[0]
+        self.x_coords = np.arange(self.width)
+        self.y_coords = np.arange(self.height)[::-1]
+        self.grid = xr.DataArray(grid, dims=("y", "x"), coords={"y": self.y_coords, "x": self.x_coords})
+        self.agent_pos = init_agent_pos
+        self.agent_direction = 0
+        self.max_steps = max_steps
+
+        self.episode_count = 0 
+        self.recent_episode_length = self.max_steps
+        self.episode_history = {}
+
+        # self.state_action_index is an array such that self.state_action_index[x,y,a] returns the _unique_ index of the state-action pair at position (x,y), action a.
+        a = np.array([0,1,2,3]) # {0: North, 1: East, 2: South, 3: West}
+        self.grid_shape = (self.height, self.width)
+        self.n_states = self.width * self.height
+        self.unique_state_index = np.arange(self.n_states).reshape(self.grid_shape) # because position is a tuple of x y but td learners require a unique index for the state
+        self.unique_state_index = xr.DataArray(self.unique_state_index, dims=("y", "x"), coords={"y": self.y_coords, "x": self.x_coords})
+        self.n_actions = 4
+        self.state_action_index = np.arange(self.n_states).reshape(self.grid_shape)
+        self.action_name_dict = {0: "Q(s,↑)", 1: "Q(s,→)", 2: "Q(s,↓)", 3: "Q(s,←)"}
+
+     
+    def render(self):
+        ax = self._plot_env()
+        ax = self._plot_agent(ax=ax,agent_pos=self.agent_pos, agent_direction=self.agent_direction)
+        ax = self._plot_rewards(ax)
+        return ax 
+
+    def _plot_env(self, ax=None):
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(0.1*self.width, 0.1*self.height))
+
+        self.grid.plot(ax=ax, cmap="Greys", zorder=20, alpha=self.grid.values, add_colorbar=False)
+        ax.set_aspect('equal')
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+
+        return ax 
+
+    def _plot_rewards(self, ax, **kwargs):
+        for reward in self.reward_locations:
+            reward_patch = plt.Circle(reward, 0.4, color='orange')
+            ax.add_patch(reward_patch)
+            ax.text(reward[0], reward[1], "R", color='white', fontsize=4, ha='center', va='center')
+        return ax
+    
+    def _plot_agent(self, agent_pos, agent_direction, ax, **kwargs):
+        alpha = kwargs.get("alpha", 1)
+        color = kwargs.get("color", plt.cm.viridis(0))
+        size_scaler = kwargs.get("size_scaler", 1)
+        # Define the base triangle vertices relative to origin
+        base_triangle = np.array([[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]]) - np.array([0.5,0.5])
+        scaled_triangle = base_triangle * size_scaler
+        # Define the rotation matrix based on direction
+        if agent_direction==0: angle=0  # North
+        elif agent_direction==1: angle=3*np.pi/2 # East
+        elif agent_direction==2: angle=np.pi # South
+        elif agent_direction==3: angle=np.pi/2 # West
+        rotation_matrix = np.array([[np.cos(angle), -np.sin(angle)], 
+                                    [np.sin(angle), np.cos(angle)]])
+        # Rotate the triangle
+        rotated_triangle = np.dot(scaled_triangle, rotation_matrix.T)   
+        # Translate the triangle to the agent position
+        translated_triangle = rotated_triangle + np.array(agent_pos)
+        # Plot the triangle
+        triangle = plt.Polygon(translated_triangle, color=color, alpha=alpha, linewidth=0)
+        ax.add_patch(triangle)
+        return ax
+    
+    def perform_episode(self,Q_values,epsilon=0.1):
+        
+        episode_step = 0
+        episode_end = False
+
+        Q_values += 0.0001*np.random.randn(*Q_values.shape) # Add noise to break ties
+        # Some lists to store episode data
+        current_state = self.unique_state_index.sel(x=self.agent_pos[0], y=self.agent_pos[1])
+        states_visited = [current_state]
+        rewards_recieved = [0] 
+        positions_visited = [self.agent_pos]
+        actions_taken = [self.agent_direction]
+        while not episode_end:
+
+            # Get current state from agent position
+            state = self.unique_state_index.sel(x=self.agent_pos[0], y=self.agent_pos[1])
+
+            # Sample a new action 
+            if np.random.rand() < epsilon:
+                action = np.random.randint(4)
+            else:
+                action = np.argmax(Q_values[state])
+
+            # Perform the action and get the next state and reward
+            next_pos, reward, episode_end = self.step(action)
+            
+            # Append current state-action pair to history
+            positions_visited.append(self.agent_pos)
+            actions_taken.append(action)
+            states_visited.append(state)
+            rewards_recieved.append(reward)
+
+            # Update the state
+            self.agent_pos = next_pos
+
+            episode_step += 1
+            
+            if episode_step > self.max_steps:
+                episode_end = True
+                reward -= 1
+            
+
+
+        self.recent_episode_length = (1 - 0.01) * self.recent_episode_length + 0.01 * episode_step
+
+        self.episode_history[self.episode_count] = {
+            "positions": np.array(positions_visited),
+            "actions": np.array(actions_taken),
+            "rewards": np.array(rewards_recieved),
+            "states": np.array(states_visited),
+            "episode_length": episode_step,
+            "smoothed_episode_length": self.recent_episode_length,
+        }
+        
+        self.episode_count += 1
+
+        return self.episode_history[self.episode_count-1]
+
+    def step(self, action):
+        "returns the next position, reward and whether the episode has ended"
+        if action == 0:   delta = (0,1) # North
+        elif action == 1: delta = (1,0) # East
+        elif action == 2: delta = (0,-1) # South
+        elif action == 3: delta = (-1,0) # West
+        proposed_next_pos = np.array(self.agent_pos) + np.array(delta)
+        is_wall = self.grid.sel(x=proposed_next_pos[0], y=proposed_next_pos[1]) == 1
+        reward = -0.01 # small penalty for moving
+        if not is_wall:
+            self.agent_pos = tuple(proposed_next_pos)
+        else: 
+            reward -= 0.1 # penalty for hitting the wall
+        episode_end = False
+        is_reward = (tuple(proposed_next_pos) in self.reward_locations)
+        if is_reward: 
+            reward += 1
+            episode_end = True
+        return self.agent_pos, reward, episode_end
+
+    def get_state_action_index(self, pos, action):
+        return self.state_action_index[pos[0], pos[1], action]
+
+    def reset(self):
+        # random start position
+        is_illegal_position = True
+        while is_illegal_position:
+            self.agent_pos = (np.random.randint(self.width), np.random.randint(self.height))
+            is_illegal_position = self.grid.sel(x=self.agent_pos[0], y=self.agent_pos[1]) == 1
+        self.agent_direction = np.random.randint(4)
+
+    def plot_episode(self, episode_count=None, ax=None):
+        if episode_count is None:
+            episode_count = self.episode_count - 1
+        else: 
+            episode_count = np.arange(self.episode_count)[episode_count]
+        episode_data = self.episode_history[episode_count]
+        positions = episode_data["positions"]
+        actions = episode_data["actions"]
+        ax = self._plot_env(ax=ax)
+        ax = self._plot_rewards(ax)
+        for i in range(len(positions)):
+            episode_frac = i/len(positions)
+            ax = self._plot_agent(agent_pos=positions[i], agent_direction=actions[i], ax=ax, color = plt.cm.viridis(1-episode_frac), size_scaler=episode_frac, alpha=0.5)
+        
+        return
+
+    def plot_Q_values(self, Q_values):
+        Q_values = Q_values.reshape(self.grid_shape[0], self.grid_shape[1], self.n_actions)
+        min_Q = np.min(Q_values)
+        max_Q = np.max(Q_values)
+
+        
+        fig = plt.figure(figsize=(4, 4))
+        gs = gridspec.GridSpec(3, 3, hspace=0.15, wspace=0.15)
+        axN = fig.add_subplot(gs[0, 1])
+        axW = fig.add_subplot(gs[1, 0])
+        axE = fig.add_subplot(gs[1, 2])
+        axS = fig.add_subplot(gs[2, 1])
+        axC = fig.add_subplot(gs[1, 1])
+        axs = [axN, axE, axS, axW, axC]
+        for i in range(4):
+            axs[i] = self._plot_env(ax=axs[i])
+            axs[i] = self._plot_rewards(ax=axs[i])
+            axs[i].imshow(Q_values[:,:,i], cmap="viridis", extent=[-0.5, self.width-0.5, -0.5, self.height-0.5], alpha=0.5, vmax=max_Q, vmin=min_Q)
+            axs[i].set_title(f"{self.action_name_dict[i]}")
+            if i > 0:
+                axs[i].set_yticks([])
+                axs[i].set_ylabel("")
+        axC = self._plot_env(ax=axC)
+        axC = self._plot_rewards(ax=axC)
+        axC = self._plot_policy(Q_values, ax=axC)
+        axC.set_title("V(s) & π(s)")
+        axC.imshow(np.mean(Q_values,axis=2), cmap="viridis", extent=[-0.5, self.width-0.5, -0.5, self.height-0.5], alpha=0.5, vmax=max_Q, vmin=min_Q)
+
+        return axs
+    
+    def _plot_policy(self, Q_values, ax=None): 
+        Q_values = Q_values.reshape(self.grid_shape[0], self.grid_shape[1], self.n_actions)
+        Q_values = xr.DataArray(Q_values, dims=("y", "x", "a"), coords={"y": self.y_coords, "x": self.x_coords, "a": np.arange(self.n_actions,dtype=int)})
+        optimal_actions = Q_values.idxmax(dim='a')
+        action_symbol_dict = {0: "↑", 1: "→", 2: "↓", 3: "←"}
+        if ax is None:
+            ax = self._plot_env()
+            ax = self._plot_rewards(ax)
+        for x in range(self.width):
+            for y in range(self.height):
+                if self.grid.sel(x=x, y=y) == 1:
+                    continue
+                action = optimal_actions.sel(x=x, y=y).values
+                ax = self._plot_agent(agent_pos=(x,y), agent_direction=action, ax=ax, alpha=0.5, color = plt.cm.viridis(1), size_scaler=0.5)
+        
+        return ax
+
+    def plot_episode_length(self):
+        fig, ax = plt.subplots(figsize=(2, 1))
+        episode_lengths = [self.episode_history[i]["episode_length"] for i in range(self.episode_count)]
+        smoothed_episode_lengths = [self.episode_history[i]["smoothed_episode_length"] for i in range(self.episode_count)]
+        ax.scatter(np.arange(self.episode_count), episode_lengths, linewidth=0, alpha=0.5,c='C0')
+        ax.plot(np.arange(len(smoothed_episode_lengths)), smoothed_episode_lengths, color='C0', alpha=0.5)
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Episode length")
+        ax = format_axes(ax)
+
+        return ax
