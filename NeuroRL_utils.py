@@ -1,5 +1,6 @@
 """Utils (mostly plotting) for NeuroRL tutorial"""
 
+from typing import Any
 import numpy as np
 import xarray as xr 
 import matplotlib.pyplot as plt
@@ -35,6 +36,8 @@ class BaseRescorlaWagner:
             self.V_history = [0]
             self.W_history = [self.W.copy()]
             self.S_history = [np.zeros(n_stimuli)]
+            self.stim_names = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
         self.alpha = alpha
         self.R_history = [0]
 
@@ -73,14 +76,14 @@ class BaseRescorlaWagner:
         for t in range(N_trial):
             for i in range(self.n_stimuli):
                 ax1.add_artist(plt.Rectangle((t-0.5, i-0.5), 1, 1, color=f'C{i+1}', alpha = (S_history[t,i] - minS) / max(1, maxS), linewidth=0))
-                ax2.scatter(t, W_history[t,i], label=f'Stimulus {i+1} weight' if t == 0 else None, color=f'C{i+1}', linewidth=0, s=8, alpha=0.7)
+                ax2.scatter(t, W_history[t,i], label=f'Stimulus {self.stim_names[i]} weight' if t == 0 else None, color=f'C{i+1}', linewidth=0, s=8, alpha=0.7)
             ax3.scatter(t, V_history[t], label='Predicted (s.w)' if t==0 else None, s=8, color='C0', linewidth=0, alpha=0.7)
             ax3.scatter(t, R_history[t], label='Actual (reward recieved)' if t==0 else None, color='orange', linewidth=0, alpha=0.7)
         
         # format axes 
         ax1 = format_axes(ax1, ylims=(0, self.n_stimuli-1), xlims=(0, N_trial-1))
         ax1.set_yticks(np.arange(self.n_stimuli))
-        ax1.set_yticklabels([f'{i+1}' for i in range(self.n_stimuli)])
+        ax1.set_yticklabels([f'{self.stim_names[i]}' for i in range(self.n_stimuli)])
         ax1.set_ylim(-0.5, self.n_stimuli-0.5)
         ax2 = format_axes(ax2)
         ax3 = format_axes(ax3)
@@ -118,6 +121,39 @@ class BaseTDLearner:
         self.R_history = []
         self.TD_history = []
 
+        self.theoretical_value = None # if not None, this is will be plotted ontop 
+
+    def learn_episode(self, 
+                    states : np.ndarray, 
+                    rewards : np.ndarray,):
+            """
+            States = the states visited in the episode, aka a list of integers
+                    [S0, S1, S2, S3, ...]
+            rewards = the rewards received after each state in the episode, aka a list of floats
+                    [R1, R2, R3, R4, ...]
+                    """
+            states = np.array(states)
+            rewards = np.array(rewards)
+            assert len(states) == len(rewards), "States and rewards must be the same length"
+
+            T_episode = len(states)+ 1 # get the length of the episode (including the initial None state)
+
+            # Insert an unrewarded "None" state at the beginning to indicate the start of an episode
+            rewards = np.insert(rewards, 0, 0)
+            states = np.insert(states.astype(object), [0, len(states)], [None, None])
+
+            # Loop over the states and learn from each transition
+            TD_errors = np.empty(T_episode) # store the TD errors
+            for i in range(T_episode):
+                # Learn from this transition
+                TD_errors[i] = self.learn(states[i], states[i+1], rewards[i])
+            
+            # Save to history 
+            self.V_history.append(self.V.copy())
+            self.S_history.append(states[:T_episode])
+            self.TD_history.append(TD_errors)
+            self.R_history.append(rewards)
+    
     def plot(self, episode=0, axs=None):
 
         T = self.S_history[episode].shape[0]
@@ -163,9 +199,13 @@ class BaseTDLearner:
         ax2.set_xlabel('Value, V(S)')
         ax2.set_xlim([min_V, max_V])
         ax2.yaxis.set_visible(False)
-        ax2.set_xticks([0])
+        ax2.set_xticks([0, max_V])
+        ax2.set_xticklabels([f'{0.0:.1f}', f'{max_V:.1f}'])
         if min_V < 0: 
             ax2.add_line(plt.Line2D([0, 0], [0, self.n_states-1], color='black', linewidth=0.2))
+        if self.theoretical_value is not None:
+            ax2.plot(self.theoretical_value, np.arange(self.n_states), color='k', linestyle='--', linewidth=0.5, label='Theory')
+            ax2.legend(loc="right")
 
 
         # First bottom plot sharing x-axis with the central plot
@@ -205,10 +245,47 @@ class BaseTDLearner:
             return axs
         
         axs = self.plot(episode=0, axs=None)
-        anim = FuncAnimation(plt.gcf(), update, frames=episodes, fargs=(axs,), interval=150)        
+        anim = FuncAnimation(plt.gcf(), update, frames=episodes, fargs=(axs,), interval=50)        
         plt.close()
         return anim
         
+class BaseTDQLearner(BaseTDLearner):
+    def __init__(self, gamma=0.5, alpha=0.1, n_states=10, n_actions=4):
+        self.n_actions = n_actions
+        # additional history arrays for storing Q values and actions
+        self.Q_history = []
+        self.A_history = []
+
+        super(BaseTDQLearner, self).__init__(gamma=gamma, alpha=alpha, n_states=n_states)
+
+    def learn_episode(
+        self,
+        states : np.ndarray, 
+        actions : np.ndarray,
+        rewards : np.ndarray,):
+
+        T_episode = len(states) + 1 # get the length of the episode (including the initial None state)
+
+        # Insert an unrewarded "None" state at the beginning to indicate the start of an episode
+        rewards = np.insert(rewards, 0, 0)
+        states = np.insert(states.astype(object), [0, len(states)], [None, None])
+        actions = np.insert(actions.astype(object), [0, len(actions)], [None, None])
+
+        # Loop over the states and learn from each transition
+        TD_errors = np.empty(T_episode) # store the TD errors
+        for i in range(T_episode):
+            # Learn from this transition
+            TD_errors[i] = self.learn(states[i], states[i+1], actions[i], actions[i+1], rewards[i])
+        
+        # Save to history 
+        self.Q_history.append(self.Q.copy())
+        self.S_history.append(states[:T_episode])
+        self.A_history.append(states[:T_episode])
+        self.TD_history.append(TD_errors)
+        self.R_history.append(rewards)
+        self.V_history.append(np.mean(self.Q, axis=1))
+
+        return 
 
 
 
@@ -401,7 +478,7 @@ class MiniGrid():
         ax = self._plot_rewards(ax)
         for i in range(len(positions)):
             episode_frac = i/len(positions)
-            ax = self._plot_agent(agent_pos=positions[i], agent_direction=actions[i], ax=ax, color = plt.cm.viridis(1-episode_frac), size_scaler=episode_frac, alpha=0.5)
+            ax = self._plot_agent(agent_pos=positions[i], agent_direction=actions[i], ax=ax, color = plt.cm.viridis(1-episode_frac), size_scaler=(1+episode_frac)/2)
         
         return
 
@@ -410,7 +487,6 @@ class MiniGrid():
         min_Q = np.min(Q_values)
         max_Q = np.max(Q_values)
 
-        
         fig = plt.figure(figsize=(4, 4))
         gs = gridspec.GridSpec(3, 3, hspace=0.15, wspace=0.15)
         axN = fig.add_subplot(gs[0, 1])
@@ -432,7 +508,6 @@ class MiniGrid():
         axC = self._plot_policy(Q_values, ax=axC)
         axC.set_title("V(s) & π(s)")
         axC.imshow(np.mean(Q_values,axis=2), cmap="viridis", extent=[-0.5, self.width-0.5, -0.5, self.height-0.5], alpha=0.5, vmax=max_Q, vmin=min_Q)
-
         return axs
     
     def _plot_policy(self, Q_values, ax=None): 
@@ -456,10 +531,10 @@ class MiniGrid():
         fig, ax = plt.subplots(figsize=(2, 1))
         episode_lengths = [self.episode_history[i]["episode_length"] for i in range(self.episode_count)]
         smoothed_episode_lengths = [self.episode_history[i]["smoothed_episode_length"] for i in range(self.episode_count)]
-        ax.scatter(np.arange(self.episode_count), episode_lengths, linewidth=0, alpha=0.5,c='C0')
-        ax.plot(np.arange(len(smoothed_episode_lengths)), smoothed_episode_lengths, color='C0', alpha=0.5)
+        ax.scatter(np.arange(self.episode_count), episode_lengths, linewidth=0, alpha=0.5,c='C0', label="Episode length")
+        ax.plot(np.arange(len(smoothed_episode_lengths)), smoothed_episode_lengths, color='k',linestyle="--",linewidth=0.5, label = "Smoothed")
         ax.set_xlabel("Episode")
-        ax.set_ylabel("Episode length")
+        ax.legend()
         ax = format_axes(ax)
 
         return ax
