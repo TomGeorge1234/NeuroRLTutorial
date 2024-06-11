@@ -1,3 +1,5 @@
 hopfield_networks.ipynb
 __pycache__/
 .DS_Store
+rand.ipynb
+figs/

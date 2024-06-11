@@ -3,8 +3,11 @@
 from typing import Any
 import numpy as np
 import xarray as xr 
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 import ratinabox
+from ratinabox.Environment import Environment
+from ratinabox.Agent import Agent
 ratinabox.stylize_plots() # sets some RC params to make plots look better
 import matplotlib.gridspec as gridspec
 from matplotlib.animation import FuncAnimation
@@ -17,6 +20,23 @@ rcParams['legend.frameon'] = True
 rcParams['legend.scatterpoints'] = 4
 rcParams["legend.framealpha"] = 0.1
 rcParams["legend.edgecolor"] = [1,1,1,0]
+rcParams["text.usetex"] = False
+
+small_action_dict = {
+    0: {"name":"North", "label":"↑", "delta":(0,1)},
+    1: {"name":"East", "label":"→", "delta":(1,0)},
+    2: {"name":"South", "label":"↓", "delta":(0,-1)},
+    3: {"name":"West", "label":"←", "delta":(-1,0)},}
+
+large_action_dict = {
+    0: {"name":"North", "label":"↑", "delta":(0,1)},
+    1: {"name":"North-East", "label":"↗", "delta":(np.sqrt(2)/2,np.sqrt(2)/2)},
+    2: {"name":"East", "label":"→", "delta":(1,0)},
+    3: {"name":"South-East", "label":"↘", "delta":(np.sqrt(2)/2,-np.sqrt(2)/2)},
+    4: {"name":"South", "label":"↓", "delta":(0,-1)},
+    5: {"name":"South-West", "label":"↙", "delta":(-np.sqrt(2)/2,-np.sqrt(2)/2)},
+    6: {"name":"West", "label":"←", "delta":(-1,0)},
+    7: {"name":"North-West", "label":"↖", "delta":(-np.sqrt(2)/2,np.sqrt(2)/2)},}
 
 def format_axes(ax, xlims=None, ylims=None):
     ax.spines['top'].set_visible(False)
@@ -120,6 +140,9 @@ class BaseTDLearner:
         self.S_history = []
         self.R_history = []
         self.TD_history = []
+        # in it's learning Q values 
+        self.Q_history = []
+        self.A_history = []
 
         self.theoretical_value = None # if not None, this is will be plotted ontop 
 
@@ -157,17 +180,19 @@ class BaseTDLearner:
     def plot(self, episode=0, axs=None):
 
         T = self.S_history[episode].shape[0]
+        T_hist = np.array([[S.shape[0] for S in self.S_history]])
+        T_plot = int(np.percentile(T_hist, 90))
 
         # convert state history from integers to one-hot encoding
         S_history = np.array([np.eye(self.n_states)[s] if s is not None else np.zeros(self.n_states) for s in self.S_history[episode]]).T
         max_V, min_V, max_TD, min_TD, max_R, min_R = 0,1,0,1,0,1
         for ep in range(len(self.V_history)):
-            max_V = max(max_V, np.max(self.V_history[ep]))
-            min_V = min(min_V, np.min(self.V_history[ep]))
-            max_TD = max(max_TD, np.max(self.TD_history[ep]))
-            min_TD = min(min_TD, np.min(self.TD_history[ep]))
-            max_R = max(max_R, np.max(self.R_history[ep]))
-            min_R = min(min_R, np.min(self.R_history[ep]))
+            max_V = np.ceil(max(max_V, np.max(self.V_history[ep])))
+            min_V = np.floor(min(min_V, np.min(self.V_history[ep])))
+            max_TD = np.ceil(max(max_TD, np.max(self.TD_history[ep])))
+            min_TD = np.floor(min(min_TD, np.min(self.TD_history[ep])))
+            max_R = np.ceil(max(max_R, np.max(self.R_history[ep])))
+            min_R = np.floor(min(min_R, np.min(self.R_history[ep])))
         
         
         if axs is None:
@@ -187,10 +212,10 @@ class BaseTDLearner:
             ax.spines['bottom'].set_position(('outward', 3))
 
         # Central big plot shows the states 
-        ax1.imshow(S_history, cmap='Greys', aspect='auto')
+        ax1.imshow(S_history[:,:T_plot], cmap='Greys', aspect='auto')
         ax1.set_ylabel("State, S", rotation=0, labelpad=20)
         ax1.spines['left'].set_bounds(0, self.n_states-1)
-        ax1.spines['bottom'].set_bounds(0, T-1)
+        ax1.spines['bottom'].set_bounds(0, T_plot-1)
         ax1.xaxis.set_visible(False)
 
         # Right plot sharing y-axis with the central plot
@@ -210,26 +235,29 @@ class BaseTDLearner:
 
         # First bottom plot sharing x-axis with the central plot
         # ax3.fill_between(np.arange(T), self.R_history[episode], 0, color='orange', alpha=0.5, linewidth=0)
-        ax3.bar(np.arange(T), self.R_history[episode], color='orange', alpha=0.5, linewidth=0)
-        ax3.spines['bottom'].set_bounds(0, T-1)
+        ax3.bar(np.arange(T)[:T_plot], self.R_history[episode][:T_plot], color='orange', alpha=0.5, linewidth=0)
+        ax3.spines['bottom'].set_bounds(0, T_plot-1)
         ax3.set_ylabel('Reward, R', rotation=0, labelpad=20)
         ax3.set_ylim([min_R, max_R])
         ax3.xaxis.set_visible(False)
+        ax3.set_yticks([min_R, 0, max_R])
         if min_R < 0: 
-            ax3.add_line(plt.Line2D([0, T-1], [0, 0], color='black', linewidth=0.2))
+            ax3.add_line(plt.Line2D([0, T_plot-1], [0, 0], color='black', linewidth=0.2))
         
         # Second bottom plot sharing x-axis with the central plot
-        x_new = np.linspace(0, T-1, 1000)
+        x_new = np.linspace(0, T_plot, 1000)
         
-        y_new = np.interp(x_new, np.arange(T), self.TD_history[episode])
+        y_new = np.interp(x_new, np.arange(T), self.TD_history[episode], right=0)
         ax4.fill_between(x_new, y_new, 0, where=y_new >= 0, color='green', alpha=0.5, linewidth=0)
         ax4.fill_between(x_new, y_new, 0, where=y_new < 0, color='red', alpha=0.5, linewidth=0)
-        ax4.spines['bottom'].set_bounds(0, T-1)
+        ax4.spines['bottom'].set_bounds(0, T_plot-1)
         ax4.set_ylabel('TD error', rotation=0, labelpad=20)
         ax4.set_xlabel('Time step, t')
         ax4.set_ylim([min_TD, max_TD])
+        ax4.set_xticks([0, T_plot-1])
+        ax4.set_yticks([min_TD, 0, max_TD])
         if min_TD < 0: 
-            ax4.add_line(plt.Line2D([0, T-1], [0, 0], color='black', linewidth=0.2))
+            ax4.add_line(plt.Line2D([0, T_plot-1], [0, 0], color='black', linewidth=0.2))
 
         fig.suptitle(f'Episode {episode}')
         fig.subplots_adjust(left=0.3, bottom=0.2, right=0.9, top=0.9, wspace=None, hspace=None) #remove border
@@ -245,16 +273,12 @@ class BaseTDLearner:
             return axs
         
         axs = self.plot(episode=0, axs=None)
-        anim = FuncAnimation(plt.gcf(), update, frames=episodes, fargs=(axs,), interval=50)        
+        anim = FuncAnimation(plt.gcf(), update, frames=episodes, fargs=(axs,), interval=100)        
         plt.close()
         return anim
         
 class BaseTDQLearner(BaseTDLearner):
     def __init__(self, gamma=0.5, alpha=0.1, n_states=10, n_actions=4):
-        self.n_actions = n_actions
-        # additional history arrays for storing Q values and actions
-        self.Q_history = []
-        self.A_history = []
 
         super(BaseTDQLearner, self).__init__(gamma=gamma, alpha=alpha, n_states=n_states)
 
@@ -293,46 +317,52 @@ class BaseTDQLearner(BaseTDLearner):
 class MiniGrid():
     def __init__(
         self,
-        grid : np.ndarray,
+        grid : np.ndarray = None,
         reward_locations : list = [(5,5)],
         reward_values : list = [10],
-        init_agent_pos : tuple = (10,10),
         max_steps = 100,
+        action_dict = small_action_dict, 
+        cost_per_step = 0.1,
+        cost_per_wall_collision = 1,
     ):
-        self.grid = grid
+        
+        if grid is not None:
+            self.grid = grid
+            self.width = grid.shape[1]
+            self.height = grid.shape[0]
+            self.x_coords = np.arange(self.width)
+            self.y_coords = np.arange(self.height)[::-1]
+            self.grid_shape = (self.height, self.width)
+            self.n_states = self.width * self.height
+        
         self.reward_locations = reward_locations
         self.reward_values = reward_values
         assert len(reward_locations) == len(reward_values), "Reward locations and values must be the same length"
-        self.width = grid.shape[1]
-        self.height = grid.shape[0]
-        self.x_coords = np.arange(self.width)
-        self.y_coords = np.arange(self.height)[::-1]
-        self.agent_pos = init_agent_pos
-        self.agent_direction = 0
-        self.max_steps = max_steps
 
+        self.cost_per_step = cost_per_step
+        self.cost_per_wall_collision = cost_per_wall_collision
+        self.max_steps = max_steps
+        self.reward_extent = 1 #effective size of reward is 1 (1 grid)
+        self.agent_extent = 1 #effective size of agent is 1 (1 grid)
         self.episode_number = 0 
         self.recent_episode_length = self.max_steps
         self.episode_history = {}
+        self.av_time_per_episode = self.max_steps
 
-        self.grid_shape = (self.height, self.width)
-        self.n_states = self.width * self.height
-        self.n_actions = 4
-        self.state_action_index = np.arange(self.n_states).reshape(self.grid_shape)
-        self.action_name_dict = {0: "Q(s,↑)", 1: "Q(s,→)", 2: "Q(s,↓)", 3: "Q(s,←)"}
+        self.action_dict = action_dict
+        self.n_actions = len(self.action_dict)
+
+        self.reset()
 
     def step(self, action):
         raise NotImplementedError
     
-    def policy(self, Q_values):
-        raise NotImplementedError
-
     def reset(self):
         is_illegal_position = True
         while is_illegal_position:
             self.agent_pos = (np.random.randint(self.width), np.random.randint(self.height))
             is_illegal_position = self.is_wall(self.agent_pos)
-        self.agent_direction = np.random.randint(4)
+        self.agent_direction = np.random.randint(self.n_actions)
 
     def is_wall(self, pos : tuple): 
         (x, y) = pos
@@ -344,7 +374,7 @@ class MiniGrid():
         else:
             return 0
     
-    def plot_episode(self, episode_number=None, ax=None):
+    def plot_episode(self, episode_number=None, ax=None, stop_at_step=None):
         if episode_number is None:
             episode_number = self.episode_number - 1
         else: 
@@ -352,17 +382,25 @@ class MiniGrid():
         episode_data = self.episode_history[episode_number]
         positions = episode_data["positions"]
         actions = episode_data["actions"]
-        ax = self._plot_env(ax=ax)
-        ax = self._plot_rewards(ax)
-        for i in range(len(positions)):
+        if ax is None:
+            ax = self._plot_env(ax=ax)
+            ax = self._plot_rewards(ax)
+        if stop_at_step is None: stop_at_step = len(positions)
+        for i in range(stop_at_step):
             episode_frac = i/len(positions)
             ax = self._plot_agent(agent_pos=positions[i], agent_direction=actions[i], ax=ax, color = plt.cm.viridis(1-episode_frac), size_scaler=(1+episode_frac)/2, alpha = (1+episode_frac)/2)
+            if i > 0:
+                ax.plot([positions[i-1][0], positions[i][0]], [positions[i-1][1], positions[i][1]], color=plt.cm.viridis(1-episode_frac), alpha = (1+episode_frac)/2, linewidth=0.5)
         
-        return
+        return ax
 
     def plot_Q(self, Q_values):
         assert (Q_values.shape == (self.n_states, self.n_actions)), f"Q_values must be of shape (n_states, n_actions) = ({self.n_states}, {self.n_actions}) but got {Q_values.shape}"
-        Q_values = Q_values.reshape(self.grid_shape[0], self.grid_shape[1], self.n_actions)[::-1,:]
+        
+        # Q_values is shape (n_states, n_actions) so we need to reshape it to (height, width, n_actions). However by default numpy.reshape reads the array in row-major order, so we need to transpose the first two dimensions
+
+        Q_values_grid = Q_values.reshape(self.grid_shape[0], self.grid_shape[1], self.n_actions)
+
         min_Q = np.min(Q_values)
         max_Q = np.max(Q_values)
 
@@ -374,23 +412,23 @@ class MiniGrid():
         axS = fig.add_subplot(gs[2, 1])
         axC = fig.add_subplot(gs[1, 1])
         axs = [axN, axE, axS, axW, axC]
-        for i in range(4):
+        for i in range(self.n_actions):
             axs[i] = self._plot_env(ax=axs[i])
             axs[i] = self._plot_rewards(ax=axs[i])
-            axs[i].imshow(Q_values[:,:,i], cmap="viridis", extent=[-0.5, self.width-0.5, -0.5, self.height-0.5], alpha=0.5, vmax=max_Q, vmin=min_Q)
-            axs[i].set_title(f"{self.action_name_dict[i]}")
+            axs[i].imshow(Q_values_grid[:,:,i], cmap="viridis", extent=[-0.5, self.width-0.5, -0.5, self.height-0.5], alpha=0.5, vmax=max_Q, vmin=min_Q)
+            axs[i].set_title(f"Q(s,{self.action_dict[i]['label']})", color=plt.colormaps['twilight'](i / self.n_actions))
             if i > 0:
                 axs[i].set_yticks([])
                 axs[i].set_ylabel("")
         axC = self._plot_env(ax=axC)
         axC = self._plot_rewards(ax=axC)
-        axC = self._plot_policy(Q_values, ax=axC)
+        axC = self.plot_policy(Q_values, ax=axC)
         axC.set_title("π(s)")
-        # axC.imshow(Q_values.max(axis=2), cmap="viridis", extent=[-0.5, self.width-0.5, -0.5, self.height-0.5], alpha=0.5, vmax=max_Q, vmin=min_Q)
         return axs
     
-    def plot_training(self):
-        fig, ax = plt.subplots(figsize=(2, 1))
+    def plot_training(self, ax=None):
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(2, 1))
         episode_lengths = np.array([len(self.episode_history[i]["states"]) for i in range(self.episode_number)])
         n_eps = len(episode_lengths)
         smoothed_episode_lengths = [np.mean(episode_lengths[max(0, i-100):i+1]) for i in range(n_eps)]
@@ -409,8 +447,14 @@ class MiniGrid():
         return ax 
 
     def plot_first_and_last_5_episodes(self):
-        fig, ax = plt.subplots(2,5, figsize=(5,4))
+        fig, ax = plt.subplots(2,5, figsize=(10,4))
         for i in range(5):
+
+            ax[0,i] = self._plot_env(ax=ax[0,i])
+            ax[1,i] = self._plot_env(ax=ax[1,i])
+            ax[0,i] = self._plot_rewards(ax=ax[0,i])
+            ax[1,i] = self._plot_rewards(ax=ax[1,i])
+        
             self.plot_episode(i, ax=ax[0,i])
             self.plot_episode(-i-1, ax=ax[1,i])
             if i == 2: 
@@ -434,10 +478,13 @@ class MiniGrid():
         return ax 
 
     def _plot_rewards(self, ax, **kwargs):
-        for reward in self.reward_locations:
-            reward_patch = plt.Circle(reward, 0.4, color='orange')
+        for (i,reward) in enumerate(self.reward_locations):
+            reward_value = self.reward_values[i]
+            max_rv, min_rv = np.max(self.reward_values), np.min(self.reward_values)
+            # color = plt.colormaps['plasma']((reward_value - min_rv) / max(1, max_rv - min_rv))
+            reward_patch = plt.Circle(reward, self.reward_extent * (0.4 + 0.3*((reward_value - min_rv) / max(1, max_rv - min_rv))), color='orange',zorder=2)
             ax.add_patch(reward_patch)
-            ax.text(reward[0], reward[1], "R", color='white', fontsize=4, ha='center', va='center',alpha=0.5)
+            ax.text(reward[0], reward[1], "R", color='white', weight="bold",fontsize=4, ha='center', va='center',alpha=0.5)
         return ax
     
     def _plot_arrow(self, pos, direction, ax, **kwargs):
@@ -448,10 +495,7 @@ class MiniGrid():
         base_triangle = np.array([[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]]) - np.array([0.5,0.5])
         scaled_triangle = base_triangle * size_scaler
         # Define the rotation matrix based on direction
-        if direction==0: angle=0  # North
-        elif direction==1: angle=3*np.pi/2 # East
-        elif direction==2: angle=np.pi # South
-        elif direction==3: angle=np.pi/2 # West
+        angle = (2*np.pi - (direction/self.n_actions)*2*np.pi) # assumes action evenly spaced around circle
         rotation_matrix = np.array([[np.cos(angle), -np.sin(angle)], 
                                     [np.sin(angle), np.cos(angle)]])
         # Rotate the triangle
@@ -462,12 +506,44 @@ class MiniGrid():
         triangle = plt.Polygon(translated_triangle, color=color, alpha=alpha, linewidth=0)
         ax.add_patch(triangle)
         return ax
+
+    def _plot_circle(self, pos, ax, **kwargs):
+        alpha = kwargs.get("alpha", 1)
+        color = kwargs.get("color", plt.cm.viridis(0.5))
+        size_scaler = 0.5*kwargs.get("size_scaler", 1)
+        circle = plt.Circle(pos, size_scaler, color=color, alpha=alpha, linewidth=0)
+        ax.add_patch(circle)
+        return ax
     
     def _plot_agent(self, ax, agent_pos, agent_direction,  **kwargs):
-        ax = self._plot_arrow(agent_pos, agent_direction, ax, **kwargs)
+        size_scaler = kwargs.pop("size_scaler", 1)
+        size_scaler *= self.agent_extent
+        ax = self._plot_circle(pos=agent_pos, direction=agent_direction, ax=ax, size_scaler=size_scaler, **kwargs)
         return ax
 
-    def _plot_policy(self, Q_values, ax=None): 
+    def animate_episode(self,episodes=None, **kwargs):
+        if episodes is None:
+            episode = [self.episode_number - 1]
+        def update(frames, ax):
+            episode, frame = frames
+            ax.clear()
+            ax = self._plot_env(ax=ax)
+            ax = self._plot_rewards(ax)
+            ax = self.plot_policy(**kwargs, ax=ax)
+            ax = self.plot_episode(episode_number=episode, ax=ax, stop_at_step=frame)
+            plt.close()
+            return ax
+        
+        axs = self.plot_Q(**kwargs)
+        ep_fr = [(episode, frame) for episode in episodes for frame in range(len(self.
+        episode_history[episode]["positions"]))]
+
+        anim = FuncAnimation(plt.gcf(), update, frames=ep_fr, fargs=(axs[-1],), interval=100)        
+        plt.close()
+        return anim
+        
+    
+    def plot_policy(self, Q_values, ax=None): 
         Q_values = Q_values.reshape(self.grid_shape[0], self.grid_shape[1], self.n_actions)
         optimal_actions = Q_values.argmax(axis=2)
         if ax is None:
@@ -477,15 +553,278 @@ class MiniGrid():
             for y in self.y_coords:
                 if self.is_wall((x,y)):
                     continue
-                action = optimal_actions[y,x]
-                ax = self._plot_arrow(pos=(x,y), direction=action, ax=ax, alpha=0.5, color = plt.cm.viridis(1), size_scaler=0.5)
+                action = optimal_actions[self.height-1-y,x]
+                color = plt.colormaps['twilight'](action / self.n_actions)
+                ax = self._plot_arrow(pos=(x,y), direction=action, ax=ax, color = color, size_scaler=0.5*self.agent_extent)
         
         return ax
 
-    
     def pos_to_state(self, pos):
-        return pos[1] * self.width + pos[0] 
-
-    def state_to_pos(self, state):
-        return (state % self.width, state // self.width)
+        return (self.height - 1 - pos[1]) * self.width + pos[0] 
     
+
+
+
+
+
+
+class MiniSpace(MiniGrid):
+    default_params = {}
+    def __init__(
+        self,
+        env : ratinabox.Environment,
+        ag : ratinabox.Agent,
+        state_features : ratinabox.Neurons,
+        reward_locations : list = [(0.5,0.5)],
+        reward_values : list = [10,],
+        max_steps : int = 100,
+        action_dict = large_action_dict,
+    ):
+        # Initialize the ratinabox environment
+        self.env = env
+        self.ag = ag
+        self.state_features = state_features
+
+        MiniGrid.__init__(self,
+                          grid=np.array([[0]]), 
+                          reward_locations=reward_locations, 
+                          reward_values=reward_values, 
+                          max_steps=max_steps,
+                          action_dict=action_dict)
+         
+        self.reward_extent = 0.1
+        self.agent_extent = 0.05
+        self.delta_x = 0.05
+        return 
+    
+
+    def pos_to_state(self, pos):
+        pos = np.array(pos)
+        state = self.state_features.get_state(evaluate_at=None, pos=pos)
+        if pos.ndim == 1:
+            return state[:,0] # (n_features,)
+        else:
+            return state.T # (n_positions, n_features,)
+    
+    def step(self, action):
+        # Propose a new position based on the action
+        proposed_new_pos = None # write this 
+        delta = self.action_dict[action]['delta']
+    
+        # Get the proposed next position by adding the delta to the current position
+        proposed_new_pos = np.array(self.agent_pos) + self.delta_x*np.array(delta)
+        proposed_new_pos = tuple(proposed_new_pos)
+        # Check if the new position is a wall or reward 
+        step = np.array([np.array(self.agent_pos),np.array(proposed_new_pos)])
+        is_wall = (True in self.env.check_wall_collisions(step)[1]) # returns True if the proposed new position crosses a wall
+        new_pos = self.agent_pos
+        if not is_wall: new_pos = proposed_new_pos
+        self.agent_pos = new_pos
+        self.agent_direction = action
+        # self.ag.update(forced_next_step=np.array(new_pos)) # internal RiaB func. to move the agent
+        # Check if the new position is a reward
+        reward = self.get_reward(new_pos) # returns True if the proposed new position is a reward
+        is_terminal = (reward > 0) # If a reward is found then the episode is over
+        reward += -1 # cost of moving 
+        if is_wall: reward += -1
+
+        # Get the new state 
+        # self.state_features.update() # internal RiaB func. to update the state features
+        # state = self.state_features.firingrate.copy()
+        state = self.pos_to_state(new_pos)
+
+        return state, reward, is_terminal
+    
+    def reset(self):
+        self.agent_pos = tuple(self.env.sample_positions(1)[0])
+    
+    def get_reward(self, pos):
+        for (reward, reward_value) in zip(self.reward_locations, self.reward_values):
+            if np.linalg.norm(np.array(reward) - np.array(pos)) < self.reward_extent:
+                return reward_value
+        return 0
+
+
+    def _plot_env(self, ax=None):
+        if ax is None: 
+            fig, ax = self.env.plot_environment(autosave=False)
+        else: 
+            fig, ax = self.env.plot_environment(ax=ax, fig = ax.get_figure())
+        return ax
+    
+    def plot_state_features(self,**kwargs):
+        fig, ax = self.state_features.plot_rate_map(**kwargs)
+        return ax 
+    
+    def plot_policy(self, Q_function, ax=None):
+        positions = self.env.discretise_environment(dx=0.05).reshape(-1,2) 
+        states = self.pos_to_state(positions)
+        Q_values = Q_function(states)
+        optimal_actions = np.argmax(Q_values, axis=1)
+        if ax is None:
+            ax = self._plot_env()
+            ax = self._plot_rewards(ax)
+        for (i,Qs) in enumerate(Q_values):
+            pos = tuple(positions[i])
+            action = optimal_actions[i]
+            color = plt.colormaps['twilight'](action / self.n_actions)
+            ax = self._plot_arrow(pos=pos, direction=action, ax=ax, color = color, size_scaler=self.agent_extent*0.5)
+        ax.set_title(r"$\pi(s)$")
+
+        return ax
+    
+    def plot_Q(self, Q_function):
+        positions = self.env.discretise_environment(dx=0.015)
+        positions_shape = positions.shape[:-1]
+        states = self.pos_to_state(positions).reshape(*positions_shape,-1)
+        Q_values = Q_function(states)
+
+        min_Q = np.min(Q_values)
+        max_Q = np.max(Q_values)
+
+        fig = plt.figure(figsize=(6, 6))
+        gs = gridspec.GridSpec(3, 3, hspace=0.15, wspace=0.15, left=0.1, right=0.9, top=0.9, bottom=0.1)
+        axN = fig.add_subplot(gs[0, 1])
+        axNE = fig.add_subplot(gs[0, 2])
+        axE = fig.add_subplot(gs[1, 2])
+        axSE = fig.add_subplot(gs[2, 2])
+        axS = fig.add_subplot(gs[2, 1])
+        axSW = fig.add_subplot(gs[2, 0])
+        axW = fig.add_subplot(gs[1, 0])
+        axNW = fig.add_subplot(gs[0, 0])
+        axC = fig.add_subplot(gs[1, 1])
+        axs = [axN, axNE, axE, axSE, axS, axSW, axW, axNW, axC]
+        for i in range(self.n_actions):
+            axs[i] = self._plot_env(ax=axs[i])
+            axs[i] = self._plot_rewards(ax=axs[i])
+            axs[i].imshow(Q_values[:,:,i], cmap="viridis", extent=self.env.extent, alpha=0.5, vmax=max_Q, vmin=min_Q)
+            axs[i].set_title(rf"$Q(s,{self.action_dict[i]['label']})$", color=plt.colormaps['twilight'](i / self.n_actions))
+            if i > 0:
+                axs[i].set_yticks([])
+                axs[i].set_ylabel("")
+        axC = self._plot_env(ax=axC)
+        axC = self._plot_rewards(ax=axC)
+        # axC = self._plot_optimal_Q(Q_function, ax=axC)
+        axC = self.plot_policy(Q_function, ax=axC)
+
+        return axs
+    
+    def _plot_optimal_Q(self, Q_function, ax=None):
+        positions = self.env.discretise_environment(dx=0.025)
+        positions_shape = positions.shape[:-1]
+        states = self.pos_to_state(positions).reshape(*positions_shape,-1)
+        Q_values = Q_function(states)
+        min_Q = np.min(Q_values)
+        max_Q = np.max(Q_values)
+        optimal_Q = np.max(Q_values, axis=2)
+
+        optimal_actions = np.argmax(Q_values, axis=2)
+        if ax is None:
+            ax = self._plot_env()
+            ax = self._plot_rewards(ax)
+        ax.imshow(optimal_Q, cmap="viridis", extent=self.env.extent, alpha=0.5, vmax=max_Q, vmin=min_Q)
+        return ax
+
+    
+    def train(
+        self,
+        tdqlearner, 
+        n_episodes=1000,
+        max_episode_length=100,
+        policy=None,
+        ): 
+
+        for i in (pbar := tqdm(range(n_episodes))):
+
+            try: # this just allows you to stop the loop by pressing the stop button in the notebook
+                
+                # Initialise an episode: 
+                terminal = False
+                self.reset() # reset the environment
+                state = self.pos_to_state(self.agent_pos)
+                action = policy(tdqlearner.Q(state, action=None))
+
+                episode_data = {'positions': [], 'states':[], 'actions':[], 'rewards':[]}
+                
+                step = 0
+                while not terminal and step < max_episode_length:
+                    # Get the next state and reward using the step() method
+                    state_next, reward, terminal = self.step(action)
+                    
+                    # Get the next action using the policy() function
+                    next_action = policy(tdqlearner.Q(state_next, action=None))
+                    
+                    # Learn from the transition using the tdqlearner.learn() method
+                    tdqlearner.learn(state, state_next, action, next_action, reward)
+
+                    # store the data
+                    episode_data['positions'].append(self.agent_pos)
+                    episode_data['states'].append(state)
+                    episode_data['actions'].append(action)
+                    episode_data['rewards'].append(reward)
+
+                    # update the state and action
+                    state = state_next
+                    action = next_action 
+                    step += 1
+
+                
+                ep_length = step
+                self.av_time_per_episode = 0.99*self.av_time_per_episode + 0.01*ep_length
+                pbar.set_description(f"Episode {i+1}, Episode length (recent average) {self.av_time_per_episode:.1f}")                
+                self.episode_history[self.episode_number] = episode_data
+                self.episode_number += 1
+
+            except KeyboardInterrupt:
+                break
+
+
+import torch 
+# make this an exercise 
+class DNNTDQLearner(torch.nn.Module):
+    def __init__(self, gamma=0.5, alpha=0.1, n_features=10, n_actions=8, hidden_units=32):
+        super().__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        self.n_features = n_features
+
+        # Initialize the weights
+        self.linear1 = torch.nn.Linear(n_features, hidden_units)
+        self.linear2 = torch.nn.Linear(hidden_units, n_actions)
+        self.relu = torch.nn.ReLU()
+
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=alpha)
+
+    def forward(self, state):
+        x = self.linear1(state)
+        x = self.relu(x)
+        x = self.linear2(x)
+        return x
+    
+    def Q(self, state, action=None, return_numpy=True):
+        """
+        This function should return the Q value for a given state and action
+        State should be a vector of features. Optionally it can be a batch of states where the batch dimension is the first dimension.
+        If action is None then the function should return the Q values for all actions in the state.
+        """
+        state = torch.tensor(state, dtype=torch.float32)
+        Q_values = self.forward(state)
+        if action is not None:
+            Q_values = Q_values[...,action]
+        if return_numpy:
+            return Q_values.detach().numpy()
+        return Q_values
+    
+    def learn(self, S, S_next, A, A_next, R):
+        # Get's the value of the current and next state
+        Q = self.Q(S,A,return_numpy=False) if S is not None else 0
+        Q_next = self.Q(S_next, A_next,return_numpy=False) if S_next is not None else 0
+        # Calculate the gradients using backprop
+        self.zero_grad()
+        Q_target = R + self.gamma * Q_next
+        Q_target = Q_target.detach()
+        loss = torch.nn.functional.mse_loss(Q, Q_target)
+        loss.backward()
+
+        # Update the weights
+        self.optimizer.step()
