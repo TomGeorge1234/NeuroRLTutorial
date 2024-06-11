@@ -348,6 +348,7 @@ class MiniGrid():
         self.recent_episode_length = self.max_steps
         self.episode_history = {}
         self.av_time_per_episode = self.max_steps
+        self.episode_lengths = []
 
         self.action_dict = action_dict
         self.n_actions = len(self.action_dict)
@@ -521,7 +522,7 @@ class MiniGrid():
         ax = self._plot_circle(pos=agent_pos, direction=agent_direction, ax=ax, size_scaler=size_scaler, **kwargs)
         return ax
 
-    def animate_episode(self,episodes=None, **kwargs):
+    def animate_episodes(self,episodes=None, **kwargs):
         if episodes is None:
             episode = [self.episode_number - 1]
         def update(frames, ax):
@@ -782,15 +783,16 @@ class MiniSpace(MiniGrid):
 import torch 
 # make this an exercise 
 class DNNTDQLearner(torch.nn.Module):
-    def __init__(self, gamma=0.5, alpha=0.1, n_features=10, n_actions=8, hidden_units=32):
+    def __init__(self, gamma=0.5, alpha=0.1, n_features=10, n_actions=8, hidden_units=(200,200,)):
         super().__init__()
         self.gamma = gamma
         self.alpha = alpha
         self.n_features = n_features
 
         # Initialize the weights
-        self.linear1 = torch.nn.Linear(n_features, hidden_units)
-        self.linear2 = torch.nn.Linear(hidden_units, n_actions)
+        self.linear1 = torch.nn.Linear(n_features, hidden_units[0])
+        self.linear2 = torch.nn.Linear(hidden_units[0], hidden_units[1])
+        self.linear3 = torch.nn.Linear(hidden_units[1], n_actions)
         self.relu = torch.nn.ReLU()
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=alpha)
@@ -799,6 +801,8 @@ class DNNTDQLearner(torch.nn.Module):
         x = self.linear1(state)
         x = self.relu(x)
         x = self.linear2(x)
+        x = self.relu(x)
+        x = self.linear3(x)
         return x
     
     def Q(self, state, action=None, return_numpy=True):
