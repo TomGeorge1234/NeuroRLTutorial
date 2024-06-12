@@ -780,55 +780,55 @@ class MiniSpace(MiniGrid):
                 break
 
 
-import torch 
-# make this an exercise 
-class DNNTDQLearner(torch.nn.Module):
-    def __init__(self, gamma=0.5, alpha=0.1, n_features=10, n_actions=8, hidden_units=(200,200,)):
-        super().__init__()
-        self.gamma = gamma
-        self.alpha = alpha
-        self.n_features = n_features
+# import torch 
+# # make this an exercise 
+# class DNNTDQLearner(torch.nn.Module):
+#     def __init__(self, gamma=0.5, alpha=0.1, n_features=10, n_actions=8, hidden_units=(200,200,)):
+#         super().__init__()
+#         self.gamma = gamma
+#         self.alpha = alpha
+#         self.n_features = n_features
 
-        # Initialize the weights
-        self.linear1 = torch.nn.Linear(n_features, hidden_units[0])
-        self.linear2 = torch.nn.Linear(hidden_units[0], hidden_units[1])
-        self.linear3 = torch.nn.Linear(hidden_units[1], n_actions)
-        self.relu = torch.nn.ReLU()
+#         # Initialize the weights
+#         self.linear1 = torch.nn.Linear(n_features, hidden_units[0])
+#         self.linear2 = torch.nn.Linear(hidden_units[0], hidden_units[1])
+#         self.linear3 = torch.nn.Linear(hidden_units[1], n_actions)
+#         self.relu = torch.nn.ReLU()
 
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=alpha)
+#         self.optimizer = torch.optim.Adam(self.parameters(), lr=alpha)
 
-    def forward(self, state):
-        x = self.linear1(state)
-        x = self.relu(x)
-        x = self.linear2(x)
-        x = self.relu(x)
-        x = self.linear3(x)
-        return x
+#     def forward(self, state):
+#         x = self.linear1(state)
+#         x = self.relu(x)
+#         x = self.linear2(x)
+#         x = self.relu(x)
+#         x = self.linear3(x)
+#         return x
     
-    def Q(self, state, action=None, return_numpy=True):
-        """
-        This function should return the Q value for a given state and action
-        State should be a vector of features. Optionally it can be a batch of states where the batch dimension is the first dimension.
-        If action is None then the function should return the Q values for all actions in the state.
-        """
-        state = torch.tensor(state, dtype=torch.float32)
-        Q_values = self.forward(state)
-        if action is not None:
-            Q_values = Q_values[...,action]
-        if return_numpy:
-            return Q_values.detach().numpy()
-        return Q_values
+#     def Q(self, state, action=None, return_numpy=True):
+#         """
+#         This function should return the Q value for a given state and action
+#         State should be a vector of features. Optionally it can be a batch of states where the batch dimension is the first dimension.
+#         If action is None then the function should return the Q values for all actions in the state.
+#         """
+#         state = torch.tensor(state, dtype=torch.float32)
+#         Q_values = self.forward(state)
+#         if action is not None:
+#             Q_values = Q_values[...,action]
+#         if return_numpy:
+#             return Q_values.detach().numpy()
+#         return Q_values
     
-    def learn(self, S, S_next, A, A_next, R):
-        # Get's the value of the current and next state
-        Q = self.Q(S,A,return_numpy=False) if S is not None else 0
-        Q_next = self.Q(S_next, A_next,return_numpy=False) if S_next is not None else 0
-        # Calculate the gradients using backprop
-        self.zero_grad()
-        Q_target = R + self.gamma * Q_next
-        Q_target = Q_target.detach()
-        loss = torch.nn.functional.mse_loss(Q, Q_target)
-        loss.backward()
+#     def learn(self, S, S_next, A, A_next, R):
+#         # Get's the value of the current and next state
+#         Q = self.Q(S,A,return_numpy=False) if S is not None else 0
+#         Q_next = self.Q(S_next, A_next,return_numpy=False) if S_next is not None else 0
+#         # Calculate the gradients using backprop
+#         self.zero_grad()
+#         Q_target = R + self.gamma * Q_next
+#         Q_target = Q_target.detach()
+#         loss = torch.nn.functional.mse_loss(Q, Q_target)
+#         loss.backward()
 
-        # Update the weights
-        self.optimizer.step()
+#         # Update the weights
+#         self.optimizer.step()
