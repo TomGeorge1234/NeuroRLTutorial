@@ -39,6 +39,18 @@ large_action_dict = {
     7: {"name":"North-West", "label":"↖", "delta":(-np.sqrt(2)/2,np.sqrt(2)/2)},}
 
 def format_axes(ax, xlims=None, ylims=None):
+    """
+    Format the axes by removing top and right spines, setting the bounds of the left and bottom spines,
+    and setting the x and y limits if provided.
+    
+    Parameters:
+    - ax: The axes object to format.
+    - xlims: The x-axis limits as a tuple (min, max). If None, the limits are determined from the data.
+    - ylims: The y-axis limits as a tuple (min, max). If None, the limits are determined from the data.
+    
+    Returns:
+    - The formatted axes object.
+    """
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     xlims = (xlims or (ax.dataLim.bounds[0], ax.dataLim.bounds[2]))
@@ -48,7 +60,17 @@ def format_axes(ax, xlims=None, ylims=None):
     return ax
 
 class BaseRescorlaWagner:
+    """
+    Base class for the Rescorla-Wagner learning algorithm.
+    """
     def __init__(self, n_stimuli=1, alpha=0.1):
+        """
+        Initialize the Rescorla-Wagner learning algorithm.
+        
+        Parameters:
+        - n_stimuli: The number of stimuli.
+        - alpha: The learning rate.
+        """
         self.n_stimuli = n_stimuli
         if n_stimuli == 1:
             self.V_history = [self.V]
@@ -62,6 +84,15 @@ class BaseRescorlaWagner:
         self.R_history = [0]
 
     def plot(self, ax=None):
+        """
+        Plot the predicted value and reward history.
+        
+        Parameters:
+        - ax: The axes object to plot on. If None, a new figure and axes will be created.
+        
+        Returns:
+        - The axes object.
+        """
         if self.n_stimuli == 1:
             ax = self.plot_1d(ax)
         else:
@@ -69,6 +100,15 @@ class BaseRescorlaWagner:
         return ax 
         
     def plot_1d(self, ax=None):
+        """
+        Plot the predicted value and reward history in 1D.
+        
+        Parameters:
+        - ax: The axes object to plot on. If None, a new figure and axes will be created.
+        
+        Returns:
+        - The axes object.
+        """
         if ax is None:
             fig, ax = plt.subplots(1, 1, figsize=(3, 2)) 
         ax.scatter(np.arange(len(self.V_history)), self.V_history, label='Predicted value', color='C0', linewidth=0, s=5, alpha=0.7) 
@@ -80,6 +120,15 @@ class BaseRescorlaWagner:
         return ax
     
     def plot_2d(self, ax=None):
+        """
+        Plot the predicted value and reward history in 2D.
+        
+        Parameters:
+        - ax: The axes object to plot on. If None, a new figure and axes will be created.
+        
+        Returns:
+        - The axes objects.
+        """
         if ax is None:
             fig = plt.figure(figsize=(4, 4))
             gs = gridspec.GridSpec(3, 1, height_ratios=[1, 4, 2])
@@ -128,7 +177,18 @@ class BaseRescorlaWagner:
         return [ax1, ax2, ax3]
 
 class BaseTDLearner:
+    """
+    Base class for the Temporal Difference (TD) learning algorithm.
+    """
     def __init__(self,gamma=0.5, alpha=0.1, n_states=10,):
+        """
+        Initialize the TD learning algorithm.
+        
+        Parameters:
+        - gamma: The discount factor.
+        - alpha: The learning rate.
+        - n_states: The number of states.
+        """
         self.V = np.zeros(n_states)
         self.S_prev = None
         self.gamma = gamma
@@ -150,11 +210,12 @@ class BaseTDLearner:
                     states : np.ndarray, 
                     rewards : np.ndarray,):
             """
-            States = the states visited in the episode, aka a list of integers
-                    [S0, S1, S2, S3, ...]
-            rewards = the rewards received after each state in the episode, aka a list of floats
-                    [R1, R2, R3, R4, ...]
-                    """
+            Learn from an episode of states and rewards.
+            
+            Parameters:
+            - states: The states visited in the episode, represented as a numpy array of integers.
+            - rewards: The rewards received after each state in the episode, represented as a numpy array of floats.
+            """
             states = np.array(states)
             rewards = np.array(rewards)
             assert len(states) == len(rewards), "States and rewards must be the same length"
@@ -178,7 +239,16 @@ class BaseTDLearner:
             self.R_history.append(rewards)
     
     def plot(self, episode=0, axs=None):
-
+        """
+        Plot the learning history for a specific episode.
+        
+        Parameters:
+        - episode: The index of the episode to plot.
+        - axs: The axes objects to plot on. If None, a new figure and axes will be created.
+        
+        Returns:
+        - The axes objects.
+        """
         T = self.S_history[episode].shape[0]
         T_hist = np.array([[S.shape[0] for S in self.S_history]])
         T_plot = int(np.percentile(T_hist, 90))
@@ -263,30 +333,55 @@ class BaseTDLearner:
         fig.subplots_adjust(left=0.3, bottom=0.2, right=0.9, top=0.9, wspace=None, hspace=None) #remove border
         return axs
     
-    def animate_plot(self,):
+    def animate_plot(self):
+        """
+        Animates the plot of the agent's performance over episodes.
+
+        Returns:
+            anim (matplotlib.animation.FuncAnimation): Animation object representing the plot animation.
+        """
         n_episodes = len(self.S_history)
         episodes = np.arange(n_episodes)
+
         def update(episode, axs):
             for ax in axs:
                 ax.clear()
             axs = self.plot(episode=episode, axs=axs)
             return axs
-        
+
         axs = self.plot(episode=0, axs=None)
-        anim = FuncAnimation(plt.gcf(), update, frames=episodes, fargs=(axs,), interval=100)        
+        anim = FuncAnimation(plt.gcf(), update, frames=episodes, fargs=(axs,), interval=100)
         plt.close()
         return anim
         
 class BaseTDQLearner(BaseTDLearner):
-    def __init__(self, gamma=0.5, alpha=0.1, n_states=10, n_actions=4):
+    """
+    Base class for Temporal Difference Q-Learning algorithms.
 
+    Args:
+        gamma (float): Discount factor for future rewards. Default is 0.5.
+        alpha (float): Learning rate. Default is 0.1.
+        n_states (int): Number of states in the environment. Default is 10.
+        n_actions (int): Number of actions in the environment. Default is 4.
+    """
+
+    def __init__(self, gamma=0.5, alpha=0.1, n_states=10, n_actions=4):
         super(BaseTDQLearner, self).__init__(gamma=gamma, alpha=alpha, n_states=n_states)
 
     def learn_episode(
         self,
         states : np.ndarray, 
         actions : np.ndarray,
-        rewards : np.ndarray,):
+        rewards : np.ndarray,
+    ):
+        """
+        Learn from a single episode of transitions.
+
+        Args:
+            states (np.ndarray): Array of states visited during the episode.
+            actions (np.ndarray): Array of actions taken during the episode.
+            rewards (np.ndarray): Array of rewards received during the episode.
+        """
 
         T_episode = len(states) + 1 # get the length of the episode (including the initial None state)
 
@@ -309,12 +404,30 @@ class BaseTDQLearner(BaseTDLearner):
         self.R_history.append(rewards)
         self.V_history.append(np.mean(self.Q, axis=1))
 
-        return 
-
 
 
 
 class MiniGrid():
+    """
+    Represents a grid environment for reinforcement learning.
+
+    Parameters:
+    - grid : np.ndarray, optional
+        The grid representation of the environment.
+    - reward_locations : list, optional
+        The locations of the rewards in the grid. Default is [(5,5)].
+    - reward_values : list, optional
+        The values of the rewards. Default is [10].
+    - max_steps : int, optional
+        The maximum number of steps allowed in an episode. Default is 100.
+    - action_dict : dict, optional
+        A dictionary mapping action indices to action labels. Default is small_action_dict.
+    - cost_per_step : float, optional
+        The cost incurred per step. Default is 0.1.
+    - cost_per_wall_collision : float, optional
+        The cost incurred per wall collision. Default is 1.
+    """
+
     def __init__(
         self,
         grid : np.ndarray = None,
@@ -325,6 +438,25 @@ class MiniGrid():
         cost_per_step = 0.1,
         cost_per_wall_collision = 1,
     ):
+        """
+        Initializes the MiniGrid environment.
+
+        Parameters:
+        - grid : np.ndarray, optional
+            The grid representation of the environment. 
+        - reward_locations : list, optional
+            The locations of the rewards in the grid. Default is [(5,5)].
+        - reward_values : list, optional
+            The values of the rewards. Default is [10].
+        - max_steps : int, optional
+            The maximum number of steps allowed in an episode. Default is 100.
+        - action_dict : dict, optional
+            A dictionary mapping action indices to action labels. Default is small_action_dict.
+        - cost_per_step : float, optional
+            The cost incurred per step. Default is 0.1.
+        - cost_per_wall_collision : float, optional
+            The cost incurred per wall collision. Default is 1.
+        """
         
         if grid is not None:
             self.grid = grid
@@ -356,9 +488,22 @@ class MiniGrid():
         self.reset()
 
     def step(self, action):
+        """
+        Takes a step in the environment based on the given action.
+
+        Parameters:
+        - action : int
+            The index of the action to take.
+
+        Raises:
+        - NotImplementedError: This method must be implemented by subclasses.
+        """
         raise NotImplementedError
     
     def reset(self):
+        """
+        Resets the environment by placing the agent at a random position and direction.
+        """
         is_illegal_position = True
         while is_illegal_position:
             self.agent_pos = (np.random.randint(self.width), np.random.randint(self.height))
@@ -366,16 +511,50 @@ class MiniGrid():
         self.agent_direction = np.random.randint(self.n_actions)
 
     def is_wall(self, pos : tuple): 
+        """
+        Checks if the given position is a wall.
+
+        Parameters:
+        - pos : tuple
+            The position to check.
+
+        Returns:
+        - bool: True if the position is a wall, False otherwise.
+        """
         (x, y) = pos
         return self.grid[self.height - 1 - y, x] # y is flipped because of the way the grid is plotted
         
     def get_reward(self, pos : tuple):
+        """
+        Gets the reward value at the given position.
+
+        Parameters:
+        - pos : tuple
+            The position to get the reward value for.
+
+        Returns:
+        - float: The reward value at the given position.
+        """
         if pos in self.reward_locations:
             return self.reward_values[self.reward_locations.index(pos)]
         else:
             return 0
     
     def plot_episode(self, episode_number=None, ax=None, stop_at_step=None):
+        """
+        Plots the trajectory of an episode.
+
+        Parameters:
+        - episode_number : int, optional
+            The episode number to plot. If not provided, the most recent episode will be plotted.
+        - ax : matplotlib.axes.Axes, optional
+            The axes to plot on. If not provided, a new figure will be created.
+        - stop_at_step : int, optional
+            The step at which to stop plotting. If not provided, the entire episode will be plotted.
+
+        Returns:
+        - matplotlib.axes.Axes: The axes object containing the plot.
+        """
         if episode_number is None:
             episode_number = self.episode_number - 1
         else: 
@@ -396,6 +575,16 @@ class MiniGrid():
         return ax
 
     def plot_Q(self, Q_values):
+        """
+        Plots the Q-values of the environment.
+
+        Parameters:
+        - Q_values : np.ndarray
+            The Q-values of the environment.
+
+        Returns:
+        - list: The list of axes objects containing the plots.
+        """
         assert (Q_values.shape == (self.n_states, self.n_actions)), f"Q_values must be of shape (n_states, n_actions) = ({self.n_states}, {self.n_actions}) but got {Q_values.shape}"
         
         # Q_values is shape (n_states, n_actions) so we need to reshape it to (height, width, n_actions). However by default numpy.reshape reads the array in row-major order, so we need to transpose the first two dimensions
@@ -428,6 +617,16 @@ class MiniGrid():
         return axs
     
     def plot_training(self, ax=None):
+        """
+        Plots the training progress.
+
+        Parameters:
+        - ax : matplotlib.axes.Axes, optional
+            The axes to plot on. If not provided, a new figure will be created.
+
+        Returns:
+        - matplotlib.axes.Axes: The axes object containing the plot.
+        """
         if ax is None:
             fig, ax = plt.subplots(figsize=(2, 1))
         episode_lengths = np.array([len(self.episode_history[i]["states"]) for i in range(self.episode_number)])
@@ -442,12 +641,28 @@ class MiniGrid():
         return ax
     
     def render(self, ax=None):
+        """
+        Renders the current state of the environment.
+
+        Parameters:
+        - ax : matplotlib.axes.Axes, optional
+            The axes to plot on. If not provided, a new figure will be created.
+
+        Returns:
+        - matplotlib.axes.Axes: The axes object containing the plot.
+        """
         ax = self._plot_env(ax=ax)
         ax = self._plot_agent(ax=ax,agent_pos=self.agent_pos, agent_direction=self.agent_direction)
         ax = self._plot_rewards(ax)
         return ax 
 
     def plot_first_and_last_5_episodes(self):
+        """
+        Plots the trajectories of the first and last 5 episodes.
+
+        Returns:
+        - numpy.ndarray: The array of axes objects containing the plots.
+        """
         fig, ax = plt.subplots(2,5, figsize=(10,4))
         for i in range(5):
 
@@ -464,6 +679,16 @@ class MiniGrid():
         return ax
     
     def _plot_env(self, ax=None):
+        """
+        Plots the environment grid.
+
+        Parameters:
+        - ax : matplotlib.axes.Axes, optional
+            The axes to plot on. If not provided, a new figure will be created.
+
+        Returns:
+        - matplotlib.axes.Axes: The axes object containing the plot.
+        """
         if ax is None:
             fig, ax = plt.subplots(figsize=(0.1*self.width, 0.1*self.height))
         ax.imshow(self.grid, cmap="Greys", zorder=20, alpha=self.grid.astype(float), extent=[-0.5, self.width-0.5, -0.5, self.height-0.5])
@@ -479,6 +704,16 @@ class MiniGrid():
         return ax 
 
     def _plot_rewards(self, ax, **kwargs):
+        """
+        Plots the rewards in the environment.
+
+        Parameters:
+        - ax : matplotlib.axes.Axes
+            The axes to plot on.
+
+        Returns:
+        - matplotlib.axes.Axes: The axes object containing the plot.
+        """
         for (i,reward) in enumerate(self.reward_locations):
             reward_value = self.reward_values[i]
             max_rv, min_rv = np.max(self.reward_values), np.min(self.reward_values)
@@ -489,6 +724,20 @@ class MiniGrid():
         return ax
     
     def _plot_arrow(self, pos, direction, ax, **kwargs):
+        """
+        Plots an arrow indicating the agent's direction.
+
+        Parameters:
+        - pos : tuple
+            The position of the arrow.
+        - direction : int
+            The direction of the arrow.
+        - ax : matplotlib.axes.Axes
+            The axes to plot on.
+
+        Returns:
+        - matplotlib.axes.Axes: The axes object containing the plot.
+        """
         alpha = kwargs.get("alpha", 1)
         color = kwargs.get("color", plt.cm.viridis(0.5))
         size_scaler = kwargs.get("size_scaler", 1)
@@ -509,6 +758,18 @@ class MiniGrid():
         return ax
 
     def _plot_circle(self, pos, ax, **kwargs):
+        """
+        Plots a circle representing a position in the environment.
+
+        Parameters:
+        - pos : tuple
+            The position of the circle.
+        - ax : matplotlib.axes.Axes
+            The axes to plot on.
+
+        Returns:
+        - matplotlib.axes.Axes: The axes object containing the plot.
+        """
         alpha = kwargs.get("alpha", 1)
         color = kwargs.get("color", plt.cm.viridis(0.5))
         size_scaler = 0.5*kwargs.get("size_scaler", 1)
@@ -517,10 +778,25 @@ class MiniGrid():
         return ax
     
     def _plot_agent(self, ax, agent_pos, agent_direction,  **kwargs):
+        """
+        Plots the agent in the environment.
+
+        Parameters:
+        - ax : matplotlib.axes.Axes
+            The axes to plot on.
+        - agent_pos : tuple
+            The position of the agent.
+        - agent_direction : int
+            The direction of the agent.
+
+        Returns:
+        - matplotlib.axes.Axes: The axes object containing the plot.
+        """
         size_scaler = kwargs.pop("size_scaler", 1)
         size_scaler *= self.agent_extent
         ax = self._plot_circle(pos=agent_pos, direction=agent_direction, ax=ax, size_scaler=size_scaler, **kwargs)
         return ax
+
 
     def animate_episodes(self,episodes=None, **kwargs):
         if episodes is None:
@@ -570,7 +846,6 @@ class MiniGrid():
 
 
 class MiniSpace(MiniGrid):
-    default_params = {}
     def __init__(
         self,
         env : ratinabox.Environment,
@@ -831,4 +1106,5 @@ class MiniSpace(MiniGrid):
 #         loss.backward()
 
 #         # Update the weights
+
 #         self.optimizer.step()
