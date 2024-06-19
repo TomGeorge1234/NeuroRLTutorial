@@ -15,3 +15,7 @@ _Figure 1: An agent has learn to navigate around a wall towards a hidden reward 
 2. Temporal Difference Learning (~60 mins)
 3. Q-Values and Policy Improvement (~60 mins)
 4. State features and function approximation (~60 mins)
+
+## Solutions
+
+Solutions to the maths exercises can be found in a seperate `solutions.ipynb` notebook which may or may not be provided to you by the TAs. 
