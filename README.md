@@ -2,7 +2,7 @@
 ## **University of Amsterdam Neuro-AI Summer School, 2024**
 ### made by: **Tom George (UCL) and Jesse Geerts (Imperial)**
 
-In this tutorial we'll study and build reinforcement learning models inspired by the brain. By the end you'll understand, and be able to construct, a series of simple but surpringly powerful model of how agents learn to navigate in environment and find rewards.
+In this tutorial we'll study and build reinforcement learning models inspired by the brain. By the end you'll understand, and be able to construct, a series of simple but surprisingly powerful models of how agents learn to navigate spatial environments and find rewards.
 
 Note: the colab renders better in Safari and Firefox than Chrome.
 
